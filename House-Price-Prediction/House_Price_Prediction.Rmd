@@ -1,0 +1,459 @@
+---
+title: "Regression Analysis"
+author: "Deepanshu Goyal"
+date: "March 3, 2020"
+output:
+  html_document: default
+  pdf_document: default
+---
+
+```{r setup}
+rm(list = ls())
+library(ggplot2)
+library(dplyr)
+library(PerformanceAnalytics)
+library(car)
+library(fastDummies)
+library(corrplot)
+library(Hmisc)
+```
+
+# Step1: Read data from the csv file and check the summary
+```{r Data}
+dataset = read.csv("train.csv")
+dataset_test = read.csv("test.csv")
+dataset_test['SalePrice']=0
+print(dim(dataset))
+print(dim(dataset_test))
+```
+
+# Step2: Find out Numerical and categorical features 
+# - Seperate Numerical columns into Discrete and Continuous features
+```{r}
+
+num_dataset = select_if(dataset,is.numeric)
+fac_dataset_only = select_if(dataset,is.factor)
+
+fac_dataset = within(dataset,rm("MSSubClass","OverallQual","OverallCond","YearRemodAdd","LowQualFinSF","BsmtFullBath","BsmtHalfBath","FullBath","HalfBath","BedroomAbvGr","KitchenAbvGr","TotRmsAbvGrd","Fireplaces","GarageYrBlt","GarageCars","X3SsnPorch","ScreenPorch","PoolArea","MiscVal","MoSold","YrSold","Id","LotFrontage","LotArea","YearBuilt","MasVnrArea","BsmtFinSF1","BsmtFinSF2","BsmtUnfSF","TotalBsmtSF","X1stFlrSF","X2ndFlrSF","GrLivArea","GarageArea","WoodDeckSF","OpenPorchSF","EnclosedPorch"))
+
+dis_clmn=c()
+cnt_clmn=c()
+
+for(cols in colnames(num_dataset)){
+  if(length(unique(num_dataset[[cols]]))>100){
+    cnt_clmn = c(cnt_clmn,cols)
+  }
+  else{
+    dis_clmn=c(dis_clmn,cols)
+  }
+}
+print(c('Numeric Columns:',dim(num_dataset)[2]))
+print(c('Numeric Discrete Columns:',length(dis_clmn)))
+print(c('Numeric Continuous Columns:', length(cnt_clmn)))
+print(c('Categorical Columns:',dim(fac_dataset_only)[2]))
+
+dis_dataset_only = select(num_dataset,dis_clmn)
+dis_dataset = select(num_dataset,c(dis_clmn,'SalePrice'))
+cnt_dataset = select(num_dataset, cnt_clmn)
+cnt_dataset_only = within(cnt_dataset,rm(SalePrice))
+target = num_dataset$SalePrice
+```
+# Step3: Let's see the missing data in our dataset
+```{r}
+missing.data = function(df)
+  {
+  df1 = data.frame()
+  for (cols in colnames(df)){
+  Column_Name = cols
+  Null_Percentage = round((length(which(is.na(df[[cols]])))/length(df[[cols]]))*100,2)
+  if(Null_Percentage!=0)
+  {
+    x = data.frame(Column_Name,Null_Percentage)
+    df1 = rbind(df1,x)
+    }
+  }
+  if (dim(df1)[1]!=0)
+    {
+   return(df1[order(-df1$Null_Percentage),]) 
+  }
+  else{
+    return("There are No Null Values !! You are all Good")
+  }
+
+  }
+
+missing.data.count = function(df)
+    {
+  df1 = data.frame()
+  for (cols in colnames(df)){
+    Column_Name = cols
+    Null_Values = length(which(is.na(df[[cols]])))
+  if(Null_Values!=0)
+  {
+    x = data.frame(Column_Name,Null_Values)
+    df1 = rbind(df1,x)
+    }
+  }
+  
+  if (dim(df1)[1]!=0)
+    {
+   return(df1[order(-df1$Null_Values),]) 
+  }
+  else{
+    return("There are No Null Values !! You are all Good")
+  }
+  
+  }
+
+
+missing.data(num_dataset)
+missing.data(fac_dataset_only)
+
+
+
+```
+#Step4: Visualize the dependent variable, as per the linear regression assumption it should follow normal distribution
+```{r}
+# Visualize the dependent variable and check its skewness abd Kurtosis
+hist(target,main = "Histogram of Sales Price", xlab = "Sales Price")
+skewness(target)
+kurtosis(target)
+
+#Q-Q plot to check normality in the dependent variable
+qqnorm(target,main = "Q-Q plot of of Sales price")
+qqline(target)
+
+```
+#Step 4: Let's explore the continuous numerical variables 
+# Scatter plots - to understand relationship between target variable i.e. SalePrice
+# Correlation Matrix - to understand relatoinship with other variables
+```{r}
+for (cols in colnames(cnt_dataset_only)){
+  plot(target,cnt_dataset_only[[cols]],xlab = 'Sale Price',ylab = cols)
+}
+
+# Observation based on scatter plots and correlation matrix. Below features have some linear relationship with Sale Price
+
+# STRONG Relation
+# GrLivArea: Above grade (ground) living area square feet
+# TotalBsmtSF: Total square feet of basement area
+# GarageArea: Size of garage in square feet
+# X1stFlrSF: First Floor square feet
+# BsmtFinSF1: Type 1 finished square feet
+# LotFrontage: Linear feet of street connected to property
+
+# SOME Linear Relation
+# LotArea: Lot size in square feet
+# X2ndFlrSF: Second floor square feet
+# YearBuilt: Original construction date
+# MasVnrArea: Masonry veneer area in square feet
+# WoodDeckSF: Wood deck area in square feet
+# OpenPorchSF: Open porch area in square feet
+
+
+corr1 = cor(cnt_dataset,use = "complete.obs")
+corrplot(corr1,type ='lower',method = 'number',order ='FPC',tl.col = 'black',number.cex = 0.5)
+
+cont_cols_f = c('GrLivArea','TotalBsmtSF','GarageArea','X1stFlrSF','BsmtFinSF1','LotFrontage','LotArea','X2ndFlrSF','YearBuilt','MasVnrArea','WoodDeckSF','OpenPorchSF')
+
+```
+#Step 4: Let's explore the discrete numerical variables 
+# Bar Plots to find out the features with less variation that can be taken out
+```{r}
+for (cols in colnames(dis_dataset_only)){
+ barplot(table(dis_dataset[[cols]]), xlab = cols) 
+}
+
+# Below Features having no variance and can be removed
+
+# LowQualFinSF: Low quality finished square feet (all floors)
+# KitchenAbvGr
+# X3SsnPorch: Three season porch area in square feet
+# ScreenPorch: Screen porch area in square feet
+# PoolArea: Pool area in square feet
+# MiscVal: $Value of miscellaneous feature
+
+```
+# Bar Plots to find out the relationship between discrete features and target variable i.e. Sale Price
+# Correlation Matrix to find out relationship with target variable i.e. Sale Price
+```{r}
+low_var_cols = c('LowQualFinSF','KitchenAbvGr','X3SsnPorch','ScreenPorch','PoolArea','MiscVal')
+for (cols in colnames(dis_dataset)){
+  if(cols %in% c(low_var_cols,'SalePrice')){
+  }
+  else{
+  bar_df = data.frame(Sale_Price=dis_dataset$SalePrice,cols = dis_dataset[[cols]])
+  bar_df = bar_df %>% group_by(cols) %>% summarise(Total_Sale_Price = sum(Sale_Price))
+  barplot(Total_Sale_Price~cols, data = bar_df,xlab = cols)
+  }
+}
+
+# Remove low variation discrete columns and calculate correlation matrix for rest of the data
+new_dis_cols = within(dis_dataset,rm('LowQualFinSF','KitchenAbvGr','X3SsnPorch','ScreenPorch','PoolArea','MiscVal'))
+
+corr2 = cor(new_dis_cols,use = "complete.obs")
+corrplot(corr2,type ='lower',method = 'number',order ='FPC',tl.col = 'black',number.cex = 0.5)
+
+# Based on the bar chart and correlation matrix following features will be selected
+
+# OverallQual: Overall material and finish quality
+# GarageCars: Size of garage in car capacity
+# FullBath: Full bathrooms above grade (Merge with BsmtFullBath: Basement full bathrooms to get total number of full bathrooms)
+# GarageYrBlt: Year garage was built
+# TotRmsAbvGrd: Total rooms above grade (does not include bathrooms)
+# YearRemodAdd: Remodel date
+# Fireplaces: Number of fireplaces
+
+dis_cols_f = c('OverallQual','GarageCars','FullBath','GarageYrBlt','TotRmsAbvGrd','YearRemodAdd','Fireplaces')
+```
+# Step5: Time to switch to categorical variable now
+# Let's draw bar plots to visualize the variance as well as relationship with dependent variable i.e. Sales Price
+```{r}
+for (cols in colnames(fac_dataset_only)){
+ barplot(table(fac_dataset_only[[cols]]), xlab = cols) 
+}
+
+# Below Features having no variance or more than 50% missing data can be removed
+
+# Street: Type of road access
+# Alley: Type of alley access
+# Utilities: Type of utilities available
+# LandContour: Flatness of the property
+# LandSlope: Slope of property
+# Condition1: Proximity to main road or railroad
+# Condition2: Proximity to main road or railroad (if a second is present)
+# BldgType: Type of dwelling
+# RoofMatl: Roof material
+# ExterCond: Present condition of the material on the exterior
+# BsmtCond: General condition of the basement
+# BsmtFinType2: Quality of second finished area (if present)
+# Heating: Type of heating
+# CentralAir: Central air conditioning
+# Electrical: Electrical system
+# Functional: Home functionality rating
+# GarageQual: Garage quality
+# GarageCond: Garage condition
+# PavedDrive: Paved driveway
+# PoolQC: Pool quality
+# Fence: Fence quality
+# MiscFeature: Miscellaneous feature not covered in other categories
+# SaleType: Type of sale
+# SaleCondition: Condition of sale
+
+low_var_fac = c('Street','Alley','Utilities','LandContour','LandSlope','Condition1','Condition2','BldgType','RoofMatl','ExterCond','BsmtCond','BsmtFinType2','Heating','CentralAir','Electrical','Functional','GarageQual','GarageCond','PavedDrive','PoolQC','Fence','MiscFeature','SaleType','SaleCondition')
+```
+# Bar Plots to find out the relationship between categorical features and target variable i.e. Sale Price
+```{r}
+for (cols in colnames(fac_dataset)){
+  if(cols %in% c(low_var_fac,'SalePrice')){
+  }
+  else{
+  fc_bar_df = data.frame(Sale_Price=fac_dataset$SalePrice,cols = fac_dataset[[cols]])
+  fc_bar_df = fc_bar_df %>% group_by(cols) %>% summarise(Total_Sale_Price = sum(Sale_Price))
+  barplot(Total_Sale_Price~cols, data = fc_bar_df,xlab = cols)
+  }
+}
+
+# Based on the bar chart following features will be selected
+
+# MSZoning: The general zoning classification
+# LotShape: General shape of property
+# LotConfig: Lot configuration
+# Neighborhood: Physical locations within Ames city limits
+# HouseStyle: Style of dwelling
+# RoofStyle: Type of roof
+# Exterior1st: Exterior covering on house
+# Exterior2nd: Exterior covering on house (if more than one material)
+# MasVnrType: Masonry veneer type
+# ExterQual: Exterior material quality
+# Foundation: Type of foundation
+# BsmtQual: Height of the basement
+# BsmtExposure: Walkout or garden level basement walls
+# BsmtFinType1: Quality of basement finished area
+# HeatingQC: Heating quality and condition
+# KitchenQual: Kitchen quality
+# FireplaceQu: Fireplace quality
+# GarageType: Garage location
+# GarageFinish: Interior finish of the garage
+ 
+cat_cols_f = c('MSZoning','LotShape','LotConfig','Neighborhood','HouseStyle','RoofStyle','Exterior1st','Exterior2nd','MasVnrType','ExterQual','Foundation','BsmtQual','BsmtExposure','BsmtFinType1','HeatingQC','KitchenQual','FireplaceQu','GarageType','GarageFinish')
+```
+
+
+#Step6: Let's finalize the list of features/columns that we have seclected after EDA
+# Combine test and train data to perform feature engineering and data enginnering steps
+```{r}
+final_cols = c(dis_cols_f,cont_cols_f,cat_cols_f,'SalePrice')
+
+#Combine test and train data
+
+combine_dataset = rbind(dataset,dataset_test)
+
+
+#Select only thsose feature that are selected after EDA
+
+feature_dataset = select(combine_dataset,c("OverallQual","GarageCars","FullBath","GarageYrBlt","TotRmsAbvGrd","YearRemodAdd","Fireplaces","GrLivArea","TotalBsmtSF","GarageArea","X1stFlrSF","BsmtFinSF1","LotFrontage","LotArea","X2ndFlrSF","YearBuilt","MasVnrArea","WoodDeckSF","OpenPorchSF","MSZoning","LotShape","LotConfig","Neighborhood","HouseStyle","RoofStyle","Exterior1st","Exterior2nd","MasVnrType","ExterQual","Foundation","BsmtQual","BsmtExposure","BsmtFinType1","HeatingQC","KitchenQual","FireplaceQu","GarageType","GarageFinish","SalePrice"))
+
+str(feature_dataset)
+```
+
+# Step 7: Let's do Feature Engineering
+# - club mutiple features into one (if possible) specifically features with year & date
+# - Convert categorical variables into discrete ones (if possible)
+
+```{r}
+# Sum of X1stFlrSF and X2ndFlrSF is equal to GrLivArea (We can drop X1stFlrSF and X2ndFlrSF)
+feature_dataset_new = subset(feature_dataset,select = -c(X1stFlrSF,X2ndFlrSF))
+
+# Convert ExterQual categorical variable into discrete variable by replacing it with numbers
+feature_dataset_new$ExterQual = unclass(feature_dataset$ExterQual)
+
+# Convert BsmtQual categorical variable into discrete variable by replacing it with numbers
+feature_dataset_new$BsmtQual = unclass(feature_dataset$BsmtQual)
+
+# Convert BsmtExposure categorical variable into discrete variable by replacing it with numbers
+feature_dataset_new$BsmtExposure = unclass(feature_dataset$BsmtExposure)
+
+# Convert HeatingQC categorical variable into discrete variable by replacing it with numbers
+feature_dataset_new$HeatingQC = unclass(feature_dataset$HeatingQC)
+
+# Convert KitchenQual categorical variable into discrete variable by replacing it with numbers
+feature_dataset_new$KitchenQual = unclass(feature_dataset$KitchenQual)
+
+# Convert FireplaceQu categorical variable into discrete variable by replacing it with numbers
+feature_dataset_new$FireplaceQu = unclass(feature_dataset$FireplaceQu)
+
+str(feature_dataset_new)
+```
+# Step 8: Data Engineering
+# - Data Engineering i.e. Fix/remove missing data, remove outliers/influencers
+
+```{r}
+print(c('Rows before removing Outliers, Columns & Null Values:',dim(feature_dataset_new)[1]))
+
+# Look for outliers and remove them from the data
+
+outlier_rmv_dataset = feature_dataset_new
+
+for (cols in colnames(outlier_rmv_dataset)){
+  
+  if (!is.factor(outlier_rmv_dataset[[cols]]))
+  {
+    outliers = sort(boxplot(outlier_rmv_dataset[[cols]],plot = FALSE)$out, decreasing = TRUE)
+    
+    if(length(outliers!=0) && length(outliers)<25)
+    {
+      outlier_rmv_dataset = outlier_rmv_dataset[-which(outlier_rmv_dataset[[cols]] %in% outliers),]
+      boxplot(feature_dataset_new[[cols]],outlier_rmv_dataset[[cols]],ylab=cols,names = c('Before','After'),horizontal = TRUE)
+    }
+  }
+}
+
+# Let's fix null values issue now. Let's see how many null values are there in our data
+
+# Replace NA values in FireplaceQu with 0
+outlier_rmv_dataset$FireplaceQu = ifelse(is.na(outlier_rmv_dataset$FireplaceQu),0,outlier_rmv_dataset$FireplaceQu)
+
+# Drop LotFrontage as there are high number of NULL values 
+outlier_rmv_dataset = subset(outlier_rmv_dataset,select = -c(LotFrontage))
+
+# Drop rows hahing 1 or 2 missing values 
+outlier_rmv_dataset = outlier_rmv_dataset[-which(is.na(outlier_rmv_dataset$GarageCars)),]
+outlier_rmv_dataset = outlier_rmv_dataset[-which(is.na(outlier_rmv_dataset$KitchenQual)),]
+outlier_rmv_dataset = outlier_rmv_dataset[-which(is.na(outlier_rmv_dataset$MSZoning)),]
+outlier_rmv_dataset = outlier_rmv_dataset[-which(is.na(outlier_rmv_dataset$Exterior1st)),]
+outlier_rmv_dataset = outlier_rmv_dataset[-which(is.na(outlier_rmv_dataset$TotalBsmtSF)),]
+outlier_rmv_dataset = outlier_rmv_dataset[-which(is.na(outlier_rmv_dataset$MasVnrArea)),]
+outlier_rmv_dataset = outlier_rmv_dataset[-which(is.na(outlier_rmv_dataset$MasVnrType)),]
+
+# Replace NA values in BsmtQual with 0
+outlier_rmv_dataset$BsmtQual = ifelse(is.na(outlier_rmv_dataset$BsmtQual),0,outlier_rmv_dataset$BsmtQual)
+
+# Replace NA values in BsmtExposure with 0
+outlier_rmv_dataset$BsmtExposure = ifelse(is.na(outlier_rmv_dataset$BsmtExposure),0,outlier_rmv_dataset$BsmtExposure)
+
+# Replace NA values in BsmtFinType1 with 0
+outlier_rmv_dataset$BsmtFinType1 = ifelse(is.na(outlier_rmv_dataset$BsmtFinType1),'Missing',outlier_rmv_dataset$BsmtFinType1)
+
+# Replace NA values in GarageType with 0
+outlier_rmv_dataset$GarageType = ifelse(is.na(outlier_rmv_dataset$GarageType),'Missing',outlier_rmv_dataset$GarageType)
+
+# Drop rows in GarageYrBlt with missing values
+outlier_rmv_dataset = outlier_rmv_dataset[-which(is.na(outlier_rmv_dataset$GarageYrBlt)),]
+
+
+print(c('Rows after removing Outliers and null values:',dim(outlier_rmv_dataset)[1]))
+
+missing.data.count(outlier_rmv_dataset)
+```
+
+#Step 9:Let's fix out target variable and check for (Mutivariate Linearity) i.e. linear combination of independent variable also follows a normal distribution that means Y should also follow a normal distribution
+```{r}
+train_dataset = subset(outlier_rmv_dataset,subset = SalePrice>0)
+test_dataset = subset(outlier_rmv_dataset,subset = SalePrice==0)
+test_dataset = within(test_dataset,rm(SalePrice))
+
+train_dataset$SalePrice = log(train_dataset$SalePrice)
+
+# Visualize the dependent variable and check its skewness abd Kurtosis (After transformation)
+hist(train_dataset$SalePrice,main = "Histogram of Log Transformed Sales Price", xlab = "Sales Price")
+skewness(train_dataset$SalePrice)
+kurtosis(train_dataset$SalePrice)
+
+qqnorm(train_dataset$SalePrice,main = "Q-Q plot of Log Transfomed Sales Price")
+qqline(train_dataset$SalePrice)
+```
+
+#Step 10: Run linear model and consider and look for insignificant coefficients
+
+```{r}
+linear_model = lm(SalePrice~.,train_dataset )
+summary(linear_model)
+```
+# Step 11: One by one Remove insignificant parameters and re-run the linear regression model til you get all significant coefficiants
+```{r}
+train_dataset1 = within(train_dataset,rm(Exterior1st,RoofStyle,Exterior2nd,LotShape,BsmtFinType1,Foundation,HouseStyle,FireplaceQu,TotRmsAbvGrd,
+                                        GarageCars,LotConfig,GarageYrBlt,FullBath,MasVnrArea,ExterQual,GarageFinish,BsmtQual,BsmtExposure,GarageType,
+                                        Neighborhood,MasVnrType))
+linear_model = lm(SalePrice~.,train_dataset1)
+summary(linear_model)
+y.hat = fitted(linear_model)
+
+```
+
+
+# Step 10: Cite and Validate Linear Regression Assumptions
+# Mutivariate Linearity (QQ Plot) - For mutiplie linear regression check for (Mutivariate Normality) i.e. linear combination of independent variable also follows a normal distribution that means Y should also follow a normal distribution
+# Homodesaticity (Residual Plots) i.e. residual should not follow any pattern - If residual has a pattern i.e. increasing, decreasing or any other non linear pattern than there is an issue of heteroscedencity
+# Muticollinearity (Correlarion Matrix & VIF): Coorelation Matrix for little or no muticollinearity between 2 features and VIF for linear combination of features
+```{r}
+# Check target variable for Mutivariate Normality
+
+# Q-Q plot of target variable
+qqnorm(train_dataset$SalePrice,main = "Q-Q plot of Log Transfomed SalePrice")
+qqline(train_dataset$SalePrice)
+
+# Scatter plot of actual vs predicted value
+plot(x=train_dataset1$SalePrice,y=y.hat, xlab = 'Actual Value in Green',ylab = 'Predicted Value', col =  c("black", "green"))
+
+# Check for Homodesaticity
+residual = resid(linear_model)
+for (cols in colnames(train_dataset1)){
+  plot(x=train_dataset1[[cols]],y=residual,xlab = cols,ylab = 'Residual')
+abline(0,0)
+}
+# Check for multi collinearity
+vif(linear_model)
+
+# Visualize the distribution of residual
+hist(residual,main = "Histogram of Linear Model Residual", xlab = "Residual")
+
+```
+
+#Step 11: Everything looks good, Lets predict the house Sale Price using our linear model 
+```{r}
+
+prediction = predict(linear_model,newdata = test_dataset)
+
+```
+
